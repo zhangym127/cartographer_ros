@@ -82,50 +82,77 @@ namespace carto = ::cartographer;
 
 using carto::transform::Rigid3d;
 
+/**
+ * @brief 主节点cartographer_node的构造函数
+ */
 Node::Node(
     const NodeOptions& node_options,
     std::unique_ptr<cartographer::mapping::MapBuilderInterface> map_builder,
-    tf2_ros::Buffer* const tf_buffer)
-    : node_options_(node_options),
+    tf2_ros::Buffer* const tf_buffer) //函数参数表后面冒号表示对成员变量的实例化
+    : node_options_(node_options), 
       map_builder_bridge_(node_options_, std::move(map_builder), tf_buffer) {
+
+  /** 构造函数从这里开始 */
+
+  /** 设置一个互斥锁 */
   carto::common::MutexLocker lock(&mutex_);
+  
+  /** 发布SubmapList */
   submap_list_publisher_ =
       node_handle_.advertise<::cartographer_ros_msgs::SubmapList>(
           kSubmapListTopic, kLatestOnlyPublisherQueueSize);
+  /** 发布轨迹节点列表 */
   trajectory_node_list_publisher_ =
       node_handle_.advertise<::visualization_msgs::MarkerArray>(
           kTrajectoryNodeListTopic, kLatestOnlyPublisherQueueSize);
+  /** 发布地标位置列表 */
   landmark_poses_list_publisher_ =
       node_handle_.advertise<::visualization_msgs::MarkerArray>(
           kLandmarkPosesListTopic, kLatestOnlyPublisherQueueSize);
+  /** 发布限制列表 */  
   constraint_list_publisher_ =
       node_handle_.advertise<::visualization_msgs::MarkerArray>(
           kConstraintListTopic, kLatestOnlyPublisherQueueSize);
+		  
+  /** 注册主节点可以提供的服务，两个参数分别是服务名和服务函数 */
+  
+  /** 注册Submap查询服务 */
   service_servers_.push_back(node_handle_.advertiseService(
       kSubmapQueryServiceName, &Node::HandleSubmapQuery, this));
+  /** 注册启动轨迹服务 */
   service_servers_.push_back(node_handle_.advertiseService(
       kStartTrajectoryServiceName, &Node::HandleStartTrajectory, this));
+  /** 注册完成轨迹服务 */
   service_servers_.push_back(node_handle_.advertiseService(
       kFinishTrajectoryServiceName, &Node::HandleFinishTrajectory, this));
+  /** 注册写状态服务 */
   service_servers_.push_back(node_handle_.advertiseService(
       kWriteStateServiceName, &Node::HandleWriteState, this));
 
+  /** 发布scan_matched_point_cloud */
   scan_matched_point_cloud_publisher_ =
       node_handle_.advertise<sensor_msgs::PointCloud2>(
           kScanMatchedPointCloudTopic, kLatestOnlyPublisherQueueSize);
 
+  /** 创建定时器来实现SubmapList等的定时发布，两个参数分别是周期和发布函数 */
+
+  /** 发布SubmapList */
   wall_timers_.push_back(node_handle_.createWallTimer(
       ::ros::WallDuration(node_options_.submap_publish_period_sec),
       &Node::PublishSubmapList, this));
+  /** 发布轨迹状态 */
   wall_timers_.push_back(node_handle_.createWallTimer(
       ::ros::WallDuration(node_options_.pose_publish_period_sec),
       &Node::PublishTrajectoryStates, this));
+  /** 发布轨迹节点列表 */
   wall_timers_.push_back(node_handle_.createWallTimer(
       ::ros::WallDuration(node_options_.trajectory_publish_period_sec),
       &Node::PublishTrajectoryNodeList, this));
+  /** 发布地标位置列表 */
   wall_timers_.push_back(node_handle_.createWallTimer(
       ::ros::WallDuration(node_options_.trajectory_publish_period_sec),
       &Node::PublishLandmarkPosesList, this));
+  /** 发布限制列表 */
   wall_timers_.push_back(node_handle_.createWallTimer(
       ::ros::WallDuration(kConstraintPublishPeriodSec),
       &Node::PublishConstraintList, this));
@@ -135,10 +162,16 @@ Node::~Node() { FinishAllTrajectories(); }
 
 ::ros::NodeHandle* Node::node_handle() { return &node_handle_; }
 
+/**
+ * @brief 处理查询submap的服务请求
+ * @param request 查询请求
+ * @param response 查询结果
+ */
 bool Node::HandleSubmapQuery(
     ::cartographer_ros_msgs::SubmapQuery::Request& request,
     ::cartographer_ros_msgs::SubmapQuery::Response& response) {
   carto::common::MutexLocker lock(&mutex_);
+  /** 通过map_builder_bridge进行submap的查询 */
   map_builder_bridge_.HandleSubmapQuery(request, response);
   return true;
 }
@@ -148,10 +181,16 @@ void Node::PublishSubmapList(const ::ros::WallTimerEvent& unused_timer_event) {
   submap_list_publisher_.publish(map_builder_bridge_.GetSubmapList());
 }
 
+/**
+ * @brief 添加位姿估计器
+ * @param trajectory_id 轨迹id
+ * @param options 轨迹相关的参数
+ */
 void Node::AddExtrapolator(const int trajectory_id,
                            const TrajectoryOptions& options) {
   constexpr double kExtrapolationEstimationTimeSec = 0.001;  // 1 ms
   CHECK(extrapolators_.count(trajectory_id) == 0);
+  /** 获得重力加速度时间常数 */
   const double gravity_time_constant =
       node_options_.map_builder_options.use_trajectory_builder_3d()
           ? options.trajectory_builder_options.trajectory_builder_3d_options()
@@ -165,9 +204,15 @@ void Node::AddExtrapolator(const int trajectory_id,
           gravity_time_constant));
 }
 
+/**
+ * @brief 添加传感器采样器
+ * @param trajectory_id 轨迹id
+ * @param options 轨迹相关的参数
+ */
 void Node::AddSensorSamplers(const int trajectory_id,
                              const TrajectoryOptions& options) {
   CHECK(sensor_samplers_.count(trajectory_id) == 0);
+  /** 添加rangefinder，odometry，fixed_frame_pose，imu，landmarks采样率 */
   sensor_samplers_.emplace(
       std::piecewise_construct, std::forward_as_tuple(trajectory_id),
       std::forward_as_tuple(
@@ -332,15 +377,26 @@ Node::ComputeExpectedSensorIds(
   return expected_topics;
 }
 
+/**
+ * @brief 添加一个新的轨迹
+ * @param options 轨迹相关的参数
+ * @param topics 
+ * @return 轨迹id
+ */
 int Node::AddTrajectory(const TrajectoryOptions& options,
                         const cartographer_ros_msgs::SensorTopics& topics) {
   const std::set<cartographer::mapping::TrajectoryBuilderInterface::SensorId>
       expected_sensor_ids = ComputeExpectedSensorIds(options, topics);
+  /** 通过map_builder_bridge进行轨迹的添加 */
   const int trajectory_id =
       map_builder_bridge_.AddTrajectory(expected_sensor_ids, options);
+  /** 添加位姿估计器 */
   AddExtrapolator(trajectory_id, options);
+  /** 添加传感器采样器 */
   AddSensorSamplers(trajectory_id, options);
+  /** 订阅Laser、IMU、Odometry等传感器数据 */
   LaunchSubscribers(options, topics, trajectory_id);
+  /** 标记当前轨迹为活跃轨迹 */
   is_active_trajectory_[trajectory_id] = true;
   for (const auto& sensor_id : expected_sensor_ids) {
     subscribed_topics_.insert(sensor_id.id);
@@ -348,9 +404,15 @@ int Node::AddTrajectory(const TrajectoryOptions& options,
   return trajectory_id;
 }
 
+/**
+ * @brief 订阅点云、IMU等传感器数据
+ * @param options 轨迹相关的参数
+ * @param topics 传感器主题
+ */
 void Node::LaunchSubscribers(const TrajectoryOptions& options,
                              const cartographer_ros_msgs::SensorTopics& topics,
                              const int trajectory_id) {
+  /** 订阅Laser数据 */
   for (const std::string& topic : ComputeRepeatedTopicNames(
            topics.laser_scan_topic, options.num_laser_scans)) {
     subscribers_[trajectory_id].push_back(
@@ -359,6 +421,7 @@ void Node::LaunchSubscribers(const TrajectoryOptions& options,
              this),
          topic});
   }
+  /** 订阅MultiEchoLaser数据 */
   for (const std::string& topic :
        ComputeRepeatedTopicNames(topics.multi_echo_laser_scan_topic,
                                  options.num_multi_echo_laser_scans)) {
@@ -368,6 +431,7 @@ void Node::LaunchSubscribers(const TrajectoryOptions& options,
              &node_handle_, this),
          topic});
   }
+  /** 订阅PointCloud2数据 */
   for (const std::string& topic : ComputeRepeatedTopicNames(
            topics.point_cloud2_topic, options.num_point_clouds)) {
     subscribers_[trajectory_id].push_back(
@@ -377,6 +441,7 @@ void Node::LaunchSubscribers(const TrajectoryOptions& options,
          topic});
   }
 
+  /** 订阅IMU数据，对3D SLAM，IMU是必须的，对于2D则是可选的 */
   // For 2D SLAM, subscribe to the IMU if we expect it. For 3D SLAM, the IMU is
   // required.
   if (node_options_.map_builder_options.use_trajectory_builder_3d() ||
@@ -391,6 +456,7 @@ void Node::LaunchSubscribers(const TrajectoryOptions& options,
          topic});
   }
 
+  /** 订阅Odometry数据 */
   if (options.use_odometry) {
     std::string topic = topics.odometry_topic;
     subscribers_[trajectory_id].push_back(
@@ -399,6 +465,8 @@ void Node::LaunchSubscribers(const TrajectoryOptions& options,
                                                   &node_handle_, this),
          topic});
   }
+  
+  /** 订阅NavSatFixMessage数据 */
   if (options.use_nav_sat) {
     std::string topic = topics.nav_sat_fix_topic;
     subscribers_[trajectory_id].push_back(
@@ -407,6 +475,7 @@ void Node::LaunchSubscribers(const TrajectoryOptions& options,
              this),
          topic});
   }
+  /** 订阅Landmark数据 */
   if (options.use_landmarks) {
     std::string topic = topics.landmark_topic;
     subscribers_[trajectory_id].push_back(
@@ -490,23 +559,31 @@ cartographer_ros_msgs::StatusResponse Node::FinishTrajectoryUnderLock(
   return status_response;
 }
 
+/**
+ * @brief 处理启动轨迹的服务请求
+ * @param request 查询请求
+ * @param response 查询结果
+ */
 bool Node::HandleStartTrajectory(
     ::cartographer_ros_msgs::StartTrajectory::Request& request,
     ::cartographer_ros_msgs::StartTrajectory::Response& response) {
   carto::common::MutexLocker lock(&mutex_);
   TrajectoryOptions options;
+  /** 必须是来自ROS的消息 */
   if (!FromRosMessage(request.options, &options) ||
       !ValidateTrajectoryOptions(options)) {
     const std::string error = "Invalid trajectory options.";
     LOG(ERROR) << error;
     response.status.code = cartographer_ros_msgs::StatusCode::INVALID_ARGUMENT;
     response.status.message = error;
+  /** 确认topics名称正确 */
   } else if (!ValidateTopicNames(request.topics, options)) {
     const std::string error = "Invalid topics.";
     LOG(ERROR) << error;
     response.status.code = cartographer_ros_msgs::StatusCode::INVALID_ARGUMENT;
     response.status.message = error;
   } else {
+	/** 添加一个新的轨迹 */
     response.trajectory_id = AddTrajectory(options, request.topics);
     response.status.code = cartographer_ros_msgs::StatusCode::OK;
     response.status.message = "Success.";

@@ -47,23 +47,31 @@ void Run() {
   constexpr double kTfBufferCacheTimeInSeconds = 10.;
   tf2_ros::Buffer tf_buffer{::ros::Duration(kTfBufferCacheTimeInSeconds)};
   tf2_ros::TransformListener tf(tf_buffer);
+  
+  /** 加载主节点参数 */
   NodeOptions node_options;
   TrajectoryOptions trajectory_options;
   std::tie(node_options, trajectory_options) =
       LoadOptions(FLAGS_configuration_directory, FLAGS_configuration_basename);
 
+  /** 调用cartographer::mapping::MapBuilder创建建图对象 */
   auto map_builder =
       cartographer::common::make_unique<cartographer::mapping::MapBuilder>(
           node_options.map_builder_options);
+
+  /** 创建主节点cartographer_node */	 
   Node node(node_options, std::move(map_builder), &tf_buffer);
+  /** 从.pbstream文件加载序列化的SLAM状态 */
   if (!FLAGS_load_state_filename.empty()) {
     node.LoadState(FLAGS_load_state_filename, FLAGS_load_frozen_state);
   }
 
+  /** 从默认主题开始第一个轨迹 */
   if (FLAGS_start_trajectory_with_default_topics) {
     node.StartTrajectoryWithDefaultTopics(trajectory_options);
   }
 
+  /** 进入主节点的主循环 */
   ::ros::spin();
 
   node.FinishAllTrajectories();

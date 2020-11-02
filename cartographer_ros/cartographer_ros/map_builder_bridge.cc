@@ -117,10 +117,16 @@ void MapBuilderBridge::LoadState(const std::string& state_filename,
   map_builder_->LoadState(&stream, load_frozen_state);
 }
 
+/**
+ * @brief 添加新的轨迹
+ * @param expected_sensor_ids 
+ * @param trajectory_options 轨迹参数
+ */
 int MapBuilderBridge::AddTrajectory(
     const std::set<cartographer::mapping::TrajectoryBuilderInterface::SensorId>&
         expected_sensor_ids,
     const TrajectoryOptions& trajectory_options) {
+  /** 通过map_builder_添加新的轨迹 */
   const int trajectory_id = map_builder_->AddTrajectoryBuilder(
       expected_sensor_ids, trajectory_options.trajectory_builder_options,
       ::std::bind(&MapBuilderBridge::OnLocalSlamResult, this,
@@ -137,6 +143,7 @@ int MapBuilderBridge::AddTrajectory(
           trajectory_options.tracking_frame,
           node_options_.lookup_transform_timeout_sec, tf_buffer_,
           map_builder_->GetTrajectoryBuilder(trajectory_id));
+		  
   auto emplace_result =
       trajectory_options_.emplace(trajectory_id, trajectory_options);
   CHECK(emplace_result.second == true);
@@ -163,12 +170,19 @@ bool MapBuilderBridge::SerializeState(const std::string& filename) {
   return writer.Close();
 }
 
+/**
+ * @brief 处理Submap的查询
+ * @param request 查询请求
+ * @param response 查询结果
+ */
 void MapBuilderBridge::HandleSubmapQuery(
     cartographer_ros_msgs::SubmapQuery::Request& request,
     cartographer_ros_msgs::SubmapQuery::Response& response) {
   cartographer::mapping::proto::SubmapQuery::Response response_proto;
+  /** 构造submap的ID */
   cartographer::mapping::SubmapId submap_id{request.trajectory_id,
                                             request.submap_index};
+  /** 通过map_builder_查询结果 */
   const std::string error =
       map_builder_->SubmapToProto(submap_id, &response_proto);
   if (!error.empty()) {
@@ -177,11 +191,12 @@ void MapBuilderBridge::HandleSubmapQuery(
     response.status.message = error;
     return;
   }
-
+ 
+  /** 将查询到的texture添加到查询结果中 */
   response.submap_version = response_proto.submap_version();
   for (const auto& texture_proto : response_proto.textures()) {
-    response.textures.emplace_back();
-    auto& texture = response.textures.back();
+    response.textures.emplace_back(); //在队列中添加一个空的texture
+    auto& texture = response.textures.back(); //获得刚创建的texture
     texture.cells.insert(texture.cells.begin(), texture_proto.cells().begin(),
                          texture_proto.cells().end());
     texture.width = texture_proto.width();
