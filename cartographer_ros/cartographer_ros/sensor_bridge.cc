@@ -39,6 +39,15 @@ const std::string& CheckNoLeadingSlash(const std::string& frame_id) {
 
 }  // namespace
 
+/**
+ * @brief 构造函数
+	只对几个关键成员变量进行了赋值，没有实体，只是个空壳子
+ * @param num_subdivisions_per_laser_scan 
+ * @param tracking_frame 
+ * @param lookup_transform_timeout_sec 
+ * @param tf_buffer
+ * @param trajectory_builder
+ */
 SensorBridge::SensorBridge(
     const int num_subdivisions_per_laser_scan,
     const std::string& tracking_frame,
@@ -134,10 +143,16 @@ std::unique_ptr<carto::sensor::ImuData> SensorBridge::ToImuData(
           sensor_to_tracking->rotation() * ToEigen(msg->angular_velocity)});
 }
 
+/**
+ * @brief 处理IMU数据
+ * @param sensor_id 传感器id 
+ * @param msg IMU数据
+ */
 void SensorBridge::HandleImuMessage(const std::string& sensor_id,
                                     const sensor_msgs::Imu::ConstPtr& msg) {
   std::unique_ptr<carto::sensor::ImuData> imu_data = ToImuData(msg);
   if (imu_data != nullptr) {
+	/** 通过trajectory_builder_添加IMU数据 */
     trajectory_builder_->AddSensorData(
         sensor_id,
         carto::sensor::ImuData{imu_data->time, imu_data->linear_acceleration,

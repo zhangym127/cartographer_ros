@@ -380,7 +380,7 @@ Node::ComputeExpectedSensorIds(
 /**
  * @brief 添加一个新的轨迹
  * @param options 轨迹相关的参数
- * @param topics 
+ * @param topics 传感器主题
  * @return 轨迹id
  */
 int Node::AddTrajectory(const TrajectoryOptions& options,
@@ -511,6 +511,11 @@ bool Node::ValidateTopicNames(
   return true;
 }
 
+/**
+ * @brief 在加锁保护的前提下处理完成轨迹的服务请求
+ * @param request 查询请求
+ * @param response 查询结果
+ */
 cartographer_ros_msgs::StatusResponse Node::FinishTrajectoryUnderLock(
     const int trajectory_id) {
   cartographer_ros_msgs::StatusResponse status_response;
@@ -524,6 +529,7 @@ cartographer_ros_msgs::StatusResponse Node::FinishTrajectoryUnderLock(
     status_response.message = error;
     return status_response;
   }
+  /** 检查轨迹是否存在 */
   if (is_active_trajectory_.count(trajectory_id) == 0) {
     const std::string error =
         "Trajectory " + std::to_string(trajectory_id) + " is not created yet.";
@@ -532,6 +538,7 @@ cartographer_ros_msgs::StatusResponse Node::FinishTrajectoryUnderLock(
     status_response.message = error;
     return status_response;
   }
+  /** 检查轨迹是否已经被完成 */
   if (!is_active_trajectory_[trajectory_id]) {
     const std::string error = "Trajectory " + std::to_string(trajectory_id) +
                               " has already been finished.";
@@ -542,6 +549,7 @@ cartographer_ros_msgs::StatusResponse Node::FinishTrajectoryUnderLock(
     return status_response;
   }
 
+  /** 关闭所有的订阅 */
   // Shutdown the subscribers of this trajectory.
   for (auto& entry : subscribers_[trajectory_id]) {
     entry.subscriber.shutdown();
@@ -550,8 +558,11 @@ cartographer_ros_msgs::StatusResponse Node::FinishTrajectoryUnderLock(
   }
   CHECK_EQ(subscribers_.erase(trajectory_id), 1);
   CHECK(is_active_trajectory_.at(trajectory_id));
+  /** 通过map_builder_bridge完成轨迹 */
   map_builder_bridge_.FinishTrajectory(trajectory_id);
+  /** 标记该轨迹已经被完成 */
   is_active_trajectory_[trajectory_id] = false;
+  /** 构造查询结果 */
   const std::string message =
       "Finished trajectory " + std::to_string(trajectory_id) + ".";
   status_response.code = cartographer_ros_msgs::StatusCode::OK;
@@ -631,6 +642,11 @@ int Node::AddOfflineTrajectory(
   return trajectory_id;
 }
 
+/**
+ * @brief 处理完成轨迹的服务请求
+ * @param request 查询请求
+ * @param response 查询结果
+ */
 bool Node::HandleFinishTrajectory(
     ::cartographer_ros_msgs::FinishTrajectory::Request& request,
     ::cartographer_ros_msgs::FinishTrajectory::Response& response) {
@@ -639,10 +655,16 @@ bool Node::HandleFinishTrajectory(
   return true;
 }
 
+/**
+ * @brief 处理写状态的服务请求
+ * @param request 查询请求
+ * @param response 查询结果
+ */
 bool Node::HandleWriteState(
     ::cartographer_ros_msgs::WriteState::Request& request,
     ::cartographer_ros_msgs::WriteState::Response& response) {
   carto::common::MutexLocker lock(&mutex_);
+  /** 通过map_builder_bridge进行状态序列化 */
   if (map_builder_bridge_.SerializeState(request.filename)) {
     response.status.code = cartographer_ros_msgs::StatusCode::OK;
     response.status.message = "State written to '" + request.filename + "'.";
@@ -697,6 +719,12 @@ void Node::HandleOdometryMessage(const int trajectory_id,
   sensor_bridge_ptr->HandleOdometryMessage(sensor_id, msg);
 }
 
+/**
+ * @brief 处理订阅的GPS数据
+ * @param trajectory_id 轨迹id
+ * @param sensor_id 传感器id
+ * @param msg GPS数据
+ */
 void Node::HandleNavSatFixMessage(const int trajectory_id,
                                   const std::string& sensor_id,
                                   const sensor_msgs::NavSatFix::ConstPtr& msg) {
@@ -704,10 +732,17 @@ void Node::HandleNavSatFixMessage(const int trajectory_id,
   if (!sensor_samplers_.at(trajectory_id).fixed_frame_pose_sampler.Pulse()) {
     return;
   }
+  /** 通过sensor_bridge处理GPS数据 */
   map_builder_bridge_.sensor_bridge(trajectory_id)
       ->HandleNavSatFixMessage(sensor_id, msg);
 }
 
+/**
+ * @brief 处理订阅的地标数据
+ * @param trajectory_id 轨迹id
+ * @param sensor_id 传感器id
+ * @param msg 地标数据
+ */
 void Node::HandleLandmarkMessage(
     const int trajectory_id, const std::string& sensor_id,
     const cartographer_ros_msgs::LandmarkList::ConstPtr& msg) {
@@ -715,10 +750,17 @@ void Node::HandleLandmarkMessage(
   if (!sensor_samplers_.at(trajectory_id).landmark_sampler.Pulse()) {
     return;
   }
+  /** 通过sensor_bridge处理地标数据 */
   map_builder_bridge_.sensor_bridge(trajectory_id)
       ->HandleLandmarkMessage(sensor_id, msg);
 }
 
+/**
+ * @brief 处理订阅的IMU数据
+ * @param trajectory_id 轨迹id
+ * @param sensor_id 传感器id
+ * @param msg IMU数据
+ */
 void Node::HandleImuMessage(const int trajectory_id,
                             const std::string& sensor_id,
                             const sensor_msgs::Imu::ConstPtr& msg) {
@@ -726,11 +768,14 @@ void Node::HandleImuMessage(const int trajectory_id,
   if (!sensor_samplers_.at(trajectory_id).imu_sampler.Pulse()) {
     return;
   }
+  /** 从map_builder_bridge_获得sensor_bridge_ptr */
   auto sensor_bridge_ptr = map_builder_bridge_.sensor_bridge(trajectory_id);
+  /** 将IMU数据添加到位姿估计器 */
   auto imu_data_ptr = sensor_bridge_ptr->ToImuData(msg);
   if (imu_data_ptr != nullptr) {
     extrapolators_.at(trajectory_id).AddImuData(*imu_data_ptr);
   }
+  /** 处理IMU消息 */
   sensor_bridge_ptr->HandleImuMessage(sensor_id, msg);
 }
 

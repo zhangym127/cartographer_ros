@@ -95,6 +95,13 @@ void PushAndResetLineMarker(visualization_msgs::Marker* marker,
 
 }  // namespace
 
+/**
+ * @brief 构造函数
+	只对几个关键成员变量进行了赋值，没有实体，只是个空壳子
+ * @param node_options 主节点参数 
+ * @param map_builder cartographer核心类对象
+ * @param tf_buffer 
+ */
 MapBuilderBridge::MapBuilderBridge(
     const NodeOptions& node_options,
     std::unique_ptr<cartographer::mapping::MapBuilderInterface> map_builder,
@@ -103,6 +110,11 @@ MapBuilderBridge::MapBuilderBridge(
       map_builder_(std::move(map_builder)),
       tf_buffer_(tf_buffer) {}
 
+/**
+ * @brief 从.pbstream文件中加载状态
+ * @param expected_sensor_ids 
+ * @param trajectory_options 轨迹参数
+ */
 void MapBuilderBridge::LoadState(const std::string& state_filename,
                                  bool load_frozen_state) {
   // Check if suffix of the state file is ".pbstream".
@@ -114,6 +126,7 @@ void MapBuilderBridge::LoadState(const std::string& state_filename,
          ".pbstream file.";
   LOG(INFO) << "Loading saved state '" << state_filename << "'...";
   cartographer::io::ProtoStreamReader stream(state_filename);
+  /** 通过map_builder_加载状态 */
   map_builder_->LoadState(&stream, load_frozen_state);
 }
 
@@ -150,11 +163,16 @@ int MapBuilderBridge::AddTrajectory(
   return trajectory_id;
 }
 
+/**
+ * @brief 完成轨迹
+ * @param trajectory_id 轨迹id
+ */
 void MapBuilderBridge::FinishTrajectory(const int trajectory_id) {
   LOG(INFO) << "Finishing trajectory with ID '" << trajectory_id << "'...";
 
   // Make sure there is a trajectory with 'trajectory_id'.
   CHECK_EQ(sensor_bridges_.count(trajectory_id), 1);
+  /** 通过map_builder_完成轨迹 */
   map_builder_->FinishTrajectory(trajectory_id);
   sensor_bridges_.erase(trajectory_id);
 }
